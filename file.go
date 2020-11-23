@@ -15,7 +15,6 @@ type File struct {
 
 func (f File) IsCompleted(path string) bool {
 	fullPath := filepath.Join(f.completedPath, path)
-	log.Printf("file.IsCompleted: '%s'", fullPath)
 	_, err := os.Stat(fullPath)
 	return err == nil
 }
@@ -65,10 +64,12 @@ func (f File) Unpack(path string) bool {
 		cmd.Stdout = &out
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
-			log.Print(cmd.String())
-			log.Print(out.String())
-			log.Print(stderr.String())
-			log.Print(err)
+			if exiterr, ok := err.(*exec.ExitError); ok && exiterr.ExitCode() != 10 {
+				log.Print(cmd.String())
+				log.Print(out.String())
+				log.Print(stderr.String())
+				log.Print(err)
+			}
 		}
 	}
 

@@ -19,7 +19,7 @@ var (
 
 func main() {
 	if err := SingleInstance(*addr); err != nil {
-		panic(err)
+		os.Exit(1)
 	}
 
 	flag.Parse()
