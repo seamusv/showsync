@@ -44,11 +44,16 @@ func (r Server) GetEntries() ([]string, error) {
 		return nil, err
 	}
 
-	completedTorrents := make([]string, 0)
+	completedTorrentsMap := make(map[string]struct{})
 	for _, entry := range entries {
 		if entry.Status == "Completed" && entry.Protocol == "torrent" {
-			completedTorrents = append(completedTorrents, entry.Title)
+			completedTorrentsMap[entry.Title] = struct{}{}
 		}
+	}
+
+	completedTorrents := make([]string, 0)
+	for k, _ := range completedTorrentsMap {
+		completedTorrents = append(completedTorrents, k)
 	}
 
 	return completedTorrents, nil

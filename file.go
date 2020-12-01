@@ -23,6 +23,7 @@ func (f File) MoveFromStageToDestination(path string) bool {
 	log.Printf("file.MoveFromStageToDestination: '%s'", path)
 	cmd := exec.Command(
 		"mv",
+		"-f",
 		filepath.Join(f.stagePath, path),
 		f.completedPath,
 	)
