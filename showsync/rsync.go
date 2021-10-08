@@ -1,4 +1,4 @@
-package main
+package showsync
 
 import (
 	"bytes"
@@ -8,9 +8,9 @@ import (
 )
 
 type RSync struct {
-	dst    string
-	src    string
-	passwd string
+	Dst    string
+	Src    string
+	Passwd string
 }
 
 func (r RSync) Sync(path string) bool {
@@ -19,10 +19,10 @@ func (r RSync) Sync(path string) bool {
 		"rsync",
 		"-avrms",
 		"--password-file",
-		r.passwd,
+		r.Passwd,
 		"--ignore-existing",
-		fmt.Sprintf("%s/%s", r.src, path),
-		r.dst,
+		fmt.Sprintf("%s/%s", r.Src, path),
+		r.Dst,
 	)
 
 	var out bytes.Buffer

@@ -1,4 +1,4 @@
-package main
+package showsync
 
 import (
 	"bytes"
@@ -9,12 +9,12 @@ import (
 )
 
 type File struct {
-	stagePath     string
-	completedPath string
+	StagePath     string
+	CompletedPath string
 }
 
 func (f File) IsCompleted(path string) bool {
-	fullPath := filepath.Join(f.completedPath, path)
+	fullPath := filepath.Join(f.CompletedPath, path)
 	_, err := os.Stat(fullPath)
 	return err == nil
 }
@@ -24,8 +24,8 @@ func (f File) MoveFromStageToDestination(path string) bool {
 	cmd := exec.Command(
 		"mv",
 		"-f",
-		filepath.Join(f.stagePath, path),
-		f.completedPath,
+		filepath.Join(f.StagePath, path),
+		f.CompletedPath,
 	)
 
 	var out bytes.Buffer
@@ -45,7 +45,7 @@ func (f File) MoveFromStageToDestination(path string) bool {
 
 func (f File) Unpack(path string) bool {
 	log.Printf("file.Unpack: '%s'", path)
-	fullPath := filepath.Join(f.stagePath, path)
+	fullPath := filepath.Join(f.StagePath, path)
 	info, err := os.Stat(fullPath)
 	if err != nil {
 		log.Print(err)

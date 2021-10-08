@@ -1,4 +1,4 @@
-package main
+package showsync
 
 import (
 	"encoding/json"
@@ -10,15 +10,15 @@ import (
 )
 
 type Server struct {
-	api string
-	url string
+	Api string
+	Url string
 }
 
 func (r Server) GetEntries() ([]string, error) {
 	log.Printf("http.GetEntries")
 	client := http.Client{Timeout: time.Second * 10}
 
-	url := fmt.Sprintf("%s/api/queue?apikey=%s", r.url, r.api)
+	url := fmt.Sprintf("%s/api/queue?apikey=%s", r.Url, r.Api)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
