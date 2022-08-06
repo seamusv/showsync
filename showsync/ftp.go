@@ -2,73 +2,119 @@ package showsync
 
 import (
 	"github.com/secsy/goftp"
+	"golang.org/x/sync/errgroup"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
 )
 
-type Ftp struct {
-	Server   string
-	Username string
-	Password string
-	RootPath string
-	Dst      string
-}
-
-func (f *Ftp) Sync(path string) error {
-	if err := os.MkdirAll(filepath.Join(f.Dst, path), 0755); err != nil {
-		return err
-	}
-
+func PrepareFtpQueue(serverUrl *url.URL, paths []string) ([]FtpFileInfo, error) {
+	password, _ := serverUrl.User.Password()
 	config := goftp.Config{
-		User:               f.Username,
-		Password:           f.Password,
+		User:               serverUrl.User.Username(),
+		Password:           password,
 		ConnectionsPerHost: 10,
 		Timeout:            10 * time.Second,
-		Logger:             os.Stderr,
+		Logger:             nil,
 	}
 
-	client, err := goftp.DialConfig(config, f.Server)
+	client, err := goftp.DialConfig(config, serverUrl.Host)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	err = Walk(client, filepath.Join(f.RootPath, path), func(fullPath string, info os.FileInfo, err error) error {
+	transferQueue := make([]FtpFileInfo, 0)
+	err = Walk(client, serverUrl.Path, func(fullPath string, info os.FileInfo, err error) error {
 		if err != nil {
-			// no permissions is okay, keep walking
+			// no permissions, keep walking
 			if err.(goftp.Error).Code() == 550 {
 				return nil
 			}
 			return err
 		}
 
-		localPath := strings.TrimPrefix(fullPath, f.RootPath)
-		if !info.IsDir() && !strings.HasSuffix(fullPath, ".png") {
-			if err := os.MkdirAll(filepath.Join(f.Dst, filepath.Dir(localPath)), 0755); err != nil {
-				return err
-			}
+		localPath := strings.TrimPrefix(fullPath, serverUrl.Path)
+		localPath = strings.TrimPrefix(localPath, "/")
 
-			remoteFile := fullPath
-			localFile := filepath.Join(f.Dst, localPath)
+		if info.IsDir() && !inPathsPrefix(paths, localPath) {
+			return filepath.SkipDir
+		}
 
-			f, err := os.Create(localFile)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-
-			if err := client.Retrieve(remoteFile, f); err != nil {
-				return err
+		if inPathsPrefix(paths, localPath) {
+			if info.IsDir() {
+				transferQueue = append(transferQueue, FtpFileInfo{Path: localPath, IsDir: true})
+			} else {
+				transferQueue = append(transferQueue, FtpFileInfo{Path: localPath, Size: info.Size()})
 			}
 		}
 
 		return nil
 	})
+	sort.Slice(transferQueue, func(i, j int) bool {
+		return transferQueue[i].Path < transferQueue[j].Path
+	})
 
-	return err
+	return transferQueue, err
+}
+
+func ProcessQueue(serverUrl *url.URL, localPath string, transferQueue []FtpFileInfo) error {
+	var client *goftp.Client
+	{
+		password, _ := serverUrl.User.Password()
+		config := goftp.Config{
+			User:               serverUrl.User.Username(),
+			Password:           password,
+			ConnectionsPerHost: 10,
+			Timeout:            10 * time.Second,
+			Logger:             nil,
+		}
+
+		c, err := goftp.DialConfig(config, serverUrl.Host)
+		if err != nil {
+			return err
+		}
+		client = c
+	}
+
+	queue := make(chan FtpFileInfo, 1)
+	g := &errgroup.Group{}
+	for i := 0; i < 5; i++ {
+		g.Go(func() error {
+			for {
+				select {
+				case item, ok := <-queue:
+					if !ok {
+						return nil
+					}
+					localFile := filepath.Join(localPath, item.Path)
+					if item.IsDir {
+						if err := os.MkdirAll(localFile, 0755); err != nil {
+							return err
+						}
+					} else {
+						info, err := os.Stat(localFile)
+						if err != nil || info.Size() != item.Size {
+							if err := Retrieve(client, filepath.Join(serverUrl.Path, item.Path), localFile); err != nil {
+								return err
+							}
+						}
+					}
+				}
+			}
+		})
+	}
+
+	for _, info := range transferQueue {
+		queue <- info
+	}
+	close(queue)
+
+	return g.Wait()
 }
 
 func Walk(client *goftp.Client, root string, walkFn filepath.WalkFunc) (ret error) {
@@ -113,4 +159,29 @@ func Walk(client *goftp.Client, root string, walkFn filepath.WalkFunc) (ret erro
 	}
 
 	return ret
+}
+
+func Retrieve(client *goftp.Client, remoteFile string, localFile string) error {
+	f, err := os.Create(localFile)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	return client.Retrieve(remoteFile, f)
+}
+
+func inPathsPrefix(paths []string, path string) bool {
+	for _, p := range paths {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	return false
+}
+
+type FtpFileInfo struct {
+	Path  string
+	IsDir bool
+	Size  int64
 }

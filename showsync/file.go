@@ -2,30 +2,23 @@ package showsync
 
 import (
 	"bytes"
-	"log"
+	"github.com/rs/zerolog/log"
 	"os"
 	"os/exec"
 	"path/filepath"
 )
 
-type File struct {
-	StagePath     string
-	CompletedPath string
-}
-
-func (f File) IsCompleted(path string) bool {
-	fullPath := filepath.Join(f.CompletedPath, path)
-	_, err := os.Stat(fullPath)
+func LocalPathExists(localPath string, path string) bool {
+	_, err := os.Stat(filepath.Join(localPath, path))
 	return err == nil
 }
 
-func (f File) MoveFromStageToDestination(path string) bool {
-	log.Printf("file.MoveFromStageToDestination: '%s'", path)
+func Move(fromPath, toPath, path string) error {
 	cmd := exec.Command(
 		"mv",
 		"-f",
-		filepath.Join(f.StagePath, path),
-		f.CompletedPath,
+		filepath.Join(fromPath, path),
+		filepath.Join(toPath, path),
 	)
 
 	var out bytes.Buffer
@@ -33,23 +26,18 @@ func (f File) MoveFromStageToDestination(path string) bool {
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		log.Print(cmd.String())
-		log.Print(out.String())
-		log.Print(stderr.String())
-		log.Print(err)
-		return false
+		log.Err(err).Str("cmd", cmd.String()).Str("stdout", out.String()).Str("stderr", stderr.String()).Msg("failed to move torrent")
+		return err
 	}
 
-	return true
+	return nil
 }
 
-func (f File) Unpack(path string) bool {
-	log.Printf("file.Unpack: '%s'", path)
-	fullPath := filepath.Join(f.StagePath, path)
+func Unpack(localPath, path string) error {
+	fullPath := filepath.Join(localPath, path)
 	info, err := os.Stat(fullPath)
 	if err != nil {
-		log.Print(err)
-		return false
+		return err
 	}
 	if info.IsDir() {
 		cmd := exec.Command(
@@ -66,13 +54,11 @@ func (f File) Unpack(path string) bool {
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
 			if exiterr, ok := err.(*exec.ExitError); ok && exiterr.ExitCode() != 10 {
-				log.Print(cmd.String())
-				log.Print(out.String())
-				log.Print(stderr.String())
-				log.Print(err)
+				log.Err(err).Str("cmd", cmd.String()).Str("stdout", out.String()).Str("stderr", stderr.String()).Msg("failed to unpack torrent")
+				return err
 			}
 		}
 	}
 
-	return true
+	return nil
 }
