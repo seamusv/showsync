@@ -1,6 +1,7 @@
 package showsync
 
 import (
+	"crypto/tls"
 	"github.com/secsy/goftp"
 	"golang.org/x/sync/errgroup"
 	"net/url"
@@ -13,72 +14,83 @@ import (
 	"time"
 )
 
-func PrepareFtpQueue(serverUrl *url.URL, paths []string) ([]FtpFileInfo, error) {
-	password, _ := serverUrl.User.Password()
+func MakeClient(serverUrl *url.URL) (*goftp.Client, error) {
 	config := goftp.Config{
 		User:               serverUrl.User.Username(),
-		Password:           password,
 		ConnectionsPerHost: 10,
 		Timeout:            10 * time.Second,
 		Logger:             nil,
 	}
+	config.Password, _ = serverUrl.User.Password()
 
-	client, err := goftp.DialConfig(config, serverUrl.Host)
-	if err != nil {
-		return nil, err
+	if serverUrl.Scheme == "ftps" {
+		config.TLSConfig = &tls.Config{
+			InsecureSkipVerify: true,
+		}
+		config.TLSMode = goftp.TLSExplicit
+	}
+
+	return goftp.DialConfig(config, serverUrl.Host)
+}
+
+func PrepareFtpQueue(serverUrl *url.URL, paths []string) ([]FtpFileInfo, error) {
+	var client *goftp.Client
+	{
+		var err error
+		client, err = MakeClient(serverUrl)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	transferQueue := make([]FtpFileInfo, 0)
-	err = Walk(client, serverUrl.Path, func(fullPath string, info os.FileInfo, err error) error {
+	{
+		err := Walk(client, serverUrl.Path, func(fullPath string, info os.FileInfo, err error) error {
+			if err != nil {
+				// no permissions, keep walking
+				if err.(goftp.Error).Code() == 550 {
+					return nil
+				}
+				return err
+			}
+
+			localPath := strings.TrimPrefix(fullPath, serverUrl.Path)
+			localPath = strings.TrimPrefix(localPath, "/")
+
+			if info.IsDir() && !inPathsPrefix(paths, localPath) {
+				return filepath.SkipDir
+			}
+
+			if inPathsPrefix(paths, localPath) {
+				if info.IsDir() {
+					transferQueue = append(transferQueue, FtpFileInfo{Path: localPath, IsDir: true})
+				} else {
+					transferQueue = append(transferQueue, FtpFileInfo{Path: localPath, Size: info.Size()})
+				}
+			}
+
+			return nil
+		})
 		if err != nil {
-			// no permissions, keep walking
-			if err.(goftp.Error).Code() == 550 {
-				return nil
-			}
-			return err
+			return nil, err
 		}
 
-		localPath := strings.TrimPrefix(fullPath, serverUrl.Path)
-		localPath = strings.TrimPrefix(localPath, "/")
+		sort.Slice(transferQueue, func(i, j int) bool {
+			return transferQueue[i].Path < transferQueue[j].Path
+		})
+	}
 
-		if info.IsDir() && !inPathsPrefix(paths, localPath) {
-			return filepath.SkipDir
-		}
-
-		if inPathsPrefix(paths, localPath) {
-			if info.IsDir() {
-				transferQueue = append(transferQueue, FtpFileInfo{Path: localPath, IsDir: true})
-			} else {
-				transferQueue = append(transferQueue, FtpFileInfo{Path: localPath, Size: info.Size()})
-			}
-		}
-
-		return nil
-	})
-	sort.Slice(transferQueue, func(i, j int) bool {
-		return transferQueue[i].Path < transferQueue[j].Path
-	})
-
-	return transferQueue, err
+	return transferQueue, nil
 }
 
 func ProcessQueue(serverUrl *url.URL, localPath string, transferQueue []FtpFileInfo) error {
 	var client *goftp.Client
 	{
-		password, _ := serverUrl.User.Password()
-		config := goftp.Config{
-			User:               serverUrl.User.Username(),
-			Password:           password,
-			ConnectionsPerHost: 10,
-			Timeout:            10 * time.Second,
-			Logger:             nil,
-		}
-
-		c, err := goftp.DialConfig(config, serverUrl.Host)
+		var err error
+		client, err = MakeClient(serverUrl)
 		if err != nil {
 			return err
 		}
-		client = c
 	}
 
 	queue := make(chan FtpFileInfo, 1)
